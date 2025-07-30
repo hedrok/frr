@@ -58,16 +58,13 @@ static inline int
 static_next_hop_type_to_family(const struct static_nexthop *sn)
 {
 	switch (sn->type) {
+	case STATIC_IPV4_IFNAME_DHCP_GATEWAY:
 	case STATIC_IPV4_GATEWAY_IFNAME:
-	case STATIC_IPV6_GATEWAY_IFNAME:
 	case STATIC_IPV4_GATEWAY:
+		return AF_INET;
+	case STATIC_IPV6_GATEWAY_IFNAME:
 	case STATIC_IPV6_GATEWAY:
-		if (sn->type == STATIC_IPV4_GATEWAY ||
-		    sn->type == STATIC_IPV4_GATEWAY_IFNAME)
-			return AF_INET;
-		else
-			return AF_INET6;
-		break;
+		return AF_INET6;
 	case STATIC_IFNAME:
 	case STATIC_BLACKHOLE:
 	default:

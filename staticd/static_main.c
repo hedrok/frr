@@ -25,6 +25,7 @@
 #include "static_routes.h"
 #include "static_zebra.h"
 #include "static_debug.h"
+#include "static_dhcpgw.h"
 #include "static_nb.h"
 
 #include "mgmt_be_client.h"
@@ -72,6 +73,8 @@ static void sigint(void)
 	bfd_protocol_integration_set_shutdown(true);
 
 	mgmt_be_client_destroy(mgmt_be_client);
+
+	static_dhcpgw_close();
 
 	static_vrf_terminate();
 
@@ -167,6 +170,8 @@ int main(int argc, char **argv, char **envp)
 		      routing_control_plane_protocols_name_validate);
 
 	routing_control_plane_protocols_register_vrf_dependency();
+
+	static_dhcpgw_init(master);
 
 	/*
 	 * We set FRR_NO_SPLIT_CONFIG flag to avoid reading our config, but we

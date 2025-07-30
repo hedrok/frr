@@ -30,7 +30,8 @@ static void static_nht_update_path(struct static_path *pn, struct prefix *nhp,
 		if (nh->type != STATIC_IPV4_GATEWAY
 		    && nh->type != STATIC_IPV4_GATEWAY_IFNAME
 		    && nh->type != STATIC_IPV6_GATEWAY
-		    && nh->type != STATIC_IPV6_GATEWAY_IFNAME)
+		    && nh->type != STATIC_IPV6_GATEWAY_IFNAME
+		    && nh->type != STATIC_IPV4_IFNAME_DHCP_GATEWAY)
 			continue;
 
 		if (nhp->family == AF_INET

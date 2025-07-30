@@ -26,6 +26,7 @@
 #include "static_debug.h"
 #include "staticd/static_vty_clippy.c"
 #include "static_nb.h"
+#include "static_dhcpgw.h"
 
 #define STATICD_STR "Static route daemon\n"
 
@@ -61,6 +62,8 @@ struct static_route_args {
 	const char *bfd_profile;
 
 	const char *input;
+
+	bool dhcp_gateway;
 };
 
 static int static_route_nb_run(struct vty *vty, struct static_route_args *args)
@@ -171,7 +174,15 @@ static int static_route_nb_run(struct vty *vty, struct static_route_args *args)
 		else
 			type = STATIC_IPV6_GATEWAY_IFNAME;
 	} else if (args->interface_name)
-		type = STATIC_IFNAME;
+		if (args->dhcp_gateway) {
+			if (args->afi == AFI_IP)
+				type = STATIC_IPV4_IFNAME_DHCP_GATEWAY;
+			else {
+				vty_out(vty, "%% dhcp-gateway supports only IPv4\n");
+				return CMD_WARNING_CONFIG_FAILED;
+			}
+		} else
+			type = STATIC_IFNAME;
 	else {
 		if (args->afi == AFI_IP)
 			type = STATIC_IPV4_GATEWAY;
@@ -292,7 +303,8 @@ static int static_route_nb_run(struct vty *vty, struct static_route_args *args)
 			}
 		}
 		if (type == STATIC_IPV4_GATEWAY_IFNAME
-		    || type == STATIC_IPV6_GATEWAY_IFNAME) {
+		    || type == STATIC_IPV6_GATEWAY_IFNAME
+		    || type == STATIC_IPV4_IFNAME_DHCP_GATEWAY) {
 			strlcpy(ab_xpath, xpath_nexthop, sizeof(ab_xpath));
 			strlcat(ab_xpath, FRR_STATIC_ROUTE_NH_ONLINK_XPATH,
 				sizeof(ab_xpath));
@@ -307,7 +319,8 @@ static int static_route_nb_run(struct vty *vty, struct static_route_args *args)
 		if (type == STATIC_IPV4_GATEWAY ||
 		    type == STATIC_IPV6_GATEWAY ||
 		    type == STATIC_IPV4_GATEWAY_IFNAME ||
-		    type == STATIC_IPV6_GATEWAY_IFNAME) {
+		    type == STATIC_IPV6_GATEWAY_IFNAME ||
+		    type == STATIC_IPV4_IFNAME_DHCP_GATEWAY) {
 			strlcpy(ab_xpath, xpath_nexthop, sizeof(ab_xpath));
 			strlcat(ab_xpath, FRR_STATIC_ROUTE_NH_COLOR_XPATH,
 				sizeof(ab_xpath));
@@ -766,7 +779,7 @@ DEFPY_YANG(ip_route,
       ip_route_cmd,
       "[no] ip route\
 	<A.B.C.D/M$prefix|A.B.C.D$prefix A.B.C.D$mask> \
-	<A.B.C.D$gate|<INTERFACE|Null0>$ifname>        \
+	<A.B.C.D$gate|<[dhcp-gateway$dhcp_gateway] INTERFACE|Null0>$ifname>   \
 	[{                                             \
 	  tag (1-4294967295)                           \
 	  |(1-255)$distance                            \
@@ -782,6 +795,7 @@ DEFPY_YANG(ip_route,
       "IP destination prefix (e.g. 10.0.0.0/8)\n"
       "IP destination prefix\n"
       "IP destination prefix mask\n"
+      "Use DHCP gateway for the interface\n"
       "IP gateway address\n"
       "IP gateway interface name\n"
       "Null interface\n"
@@ -821,6 +835,7 @@ DEFPY_YANG(ip_route,
 		.bfd_multi_hop = !!bfd_multi_hop,
 		.bfd_source = bfd_source_str,
 		.bfd_profile = bfd_profile,
+		.dhcp_gateway = !!dhcp_gateway,
 	};
 
 	return static_route_nb_run(vty, &args);
@@ -1351,6 +1366,10 @@ static void nexthop_cli_show(struct vty *vty, const struct lyd_node *route,
 
 	nh_type = yang_dnode_get_enum(nexthop, "./nh-type");
 	switch (nh_type) {
+    case STATIC_IPV4_IFNAME_DHCP_GATEWAY:
+		vty_out(vty, " dhcp-gateway %s",
+			yang_dnode_get_string(nexthop, "interface"));
+		break;
 	case STATIC_IFNAME:
 		vty_out(vty, " %s",
 			yang_dnode_get_string(nexthop, "./interface"));
@@ -1478,6 +1497,7 @@ int static_nexthop_cli_cmp(const struct lyd_node *dnode1,
 		return (int)nh_type1 - (int)nh_type2;
 
 	switch (nh_type1) {
+    case STATIC_IPV4_IFNAME_DHCP_GATEWAY:
 	case STATIC_IFNAME:
 		ret = if_cmp_name_func(
 			yang_dnode_get_string(dnode1, "./interface"),
@@ -1628,6 +1648,61 @@ static struct cmd_node debug_node = {
 
 #endif /* ifndef INCLUDE_MGMTD_CMDDEFS_ONLY */
 
+#ifndef INCLUDE_MGMTD_CMDDEFS_ONLY
+#define STATIC_ROUTE_DHCPGWSTR "Static routes via DHCP gateway configuration\n"
+
+DEFPY(static_route_dhcp_gateway_poll_period,
+      static_route_dhcp_gateway_poll_period_cmd,
+      "static-route-dhcp-gateway poll-period (0-86400)",
+      STATIC_ROUTE_DHCPGWSTR
+      "Set poll period\n"
+      "DHCP gateway poll period in seconds, 0 - disabled\n"
+      )
+{
+	static_dhcpgw_set_poll_period_seconds(poll_period);
+
+	return CMD_SUCCESS;
+}
+
+DEFPY(static_route_dhcp_gateway_lease_prefix,
+      static_route_dhcp_gateway_lease_prefix_cmd,
+      "static-route-dhcp-gateway dhclient-lease-path-prefix LEASEPREFIX",
+      STATIC_ROUTE_DHCPGWSTR
+      "Set dhclient lease path prefix\n"
+      "dhclient lease path prefix e.g. /var/run/dhclient/dhclient_\n"
+      )
+{
+	static_dhcpgw_set_lease_path_prefix(leaseprefix);
+
+	return CMD_SUCCESS;
+}
+
+DEFPY(static_route_dhcp_gateway_lease_suffix,
+      static_route_dhcp_gateway_lease_suffix_cmd,
+      "static-route-dhcp-gateway dhclient-lease-path-suffix LEASESUFFIX",
+      STATIC_ROUTE_DHCPGWSTR
+      "Set dhclient lease path suffix\n"
+      "dhclient lease path suffix e.g. .lease\n"
+      )
+{
+	static_dhcpgw_set_lease_path_suffix(leasesuffix);
+
+	return CMD_SUCCESS;
+}
+
+DEFPY(static_route_dhcp_gateway_update,
+      static_route_dhcp_gateway_update_cmd,
+      "static-route-dhcp-gateway update",
+      STATIC_ROUTE_DHCPGWSTR
+      "Reread dhclient lease IP addresses\n"
+      )
+{
+	static_dhcpgw_update();
+
+	return CMD_SUCCESS;
+}
+#endif /* ifndef INCLUDE_MGMTD_CMDDEFS_ONLY */
+
 void static_vty_init(void)
 {
 #ifndef INCLUDE_MGMTD_CMDDEFS_ONLY
@@ -1636,6 +1711,11 @@ void static_vty_init(void)
 	install_element(CONFIG_NODE, &debug_staticd_cmd);
 	install_element(ENABLE_NODE, &show_debugging_static_cmd);
 	install_element(ENABLE_NODE, &staticd_show_bfd_routes_cmd);
+
+	install_element(CONFIG_NODE, &static_route_dhcp_gateway_poll_period_cmd);
+	install_element(CONFIG_NODE, &static_route_dhcp_gateway_lease_prefix_cmd);
+	install_element(CONFIG_NODE, &static_route_dhcp_gateway_lease_suffix_cmd);
+	install_element(ENABLE_NODE, &static_route_dhcp_gateway_update_cmd);
 #endif /* ifndef INCLUDE_MGMTD_CMDDEFS_ONLY */
 
 	install_element(CONFIG_NODE, &ip_mroute_dist_cmd);
