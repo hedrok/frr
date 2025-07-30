@@ -27,6 +27,7 @@
 #include "ripd/rip_nb.h"
 #include "ripngd/ripng_nb.h"
 #include "staticd/static_vty.h"
+#include "dhcpgwd/dhcpgw_vty.h"
 #include "zebra/zebra_cli.h"
 
 extern struct frr_daemon_info *mgmt_daemon_info;
