@@ -15512,6 +15512,35 @@ DEFUN (show_bgp_link_state_route,
 	return CMD_SUCCESS;
 }
 
+DEFUN(show_bgp_link_state_ted,
+      show_bgp_link_state_ted_cmd,
+      "show bgp link-state ted",
+      SHOW_STR
+      BGP_STR
+      "Link-State information\n"
+      "Traffic Engineering Database\n")
+{
+	struct bgp *bgp = NULL;
+
+	bgp = bgp_get_default();
+	if (!bgp) {
+		vty_out(vty, "%% No BGP instance found\n");
+		return CMD_WARNING;
+	}
+
+	if (!bgp->ls_info) {
+		vty_out(vty, "%% BGP-LS not available\n");
+		return CMD_WARNING;
+	}
+
+	if (!bgp->ls_info->ted) {
+		vty_out(vty, "%% BGP-LS TED not available\n");
+		return CMD_WARNING;
+	}
+
+	ls_show_ted(bgp->ls_info->ted, vty, NULL, true);
+}
+
 DEFUN (show_ip_bgp_route,
        show_ip_bgp_route_cmd,
        "show [ip] bgp [<view|vrf> VIEWVRFNAME] ["BGP_AFI_CMD_STR" ["BGP_SAFI_WITH_LABEL_CMD_STR"]]<A.B.C.D|A.B.C.D/M|X:X::X:X|X:X::X:X/M> [internal] [<bestpath|multipath>] [rpki <valid|invalid|notfound>] [json]",
@@ -18651,6 +18680,7 @@ void bgp_route_init(void)
 
 	/* BGP Link-State */
 	install_element(VIEW_NODE, &show_bgp_link_state_route_cmd);
+	install_element(VIEW_NODE, &show_bgp_link_state_ted_cmd);
 
 	/* show bgp vrf <afi> <safi> detailed */
 	install_element(VIEW_NODE,
