@@ -121,15 +121,19 @@ enum bgp_ls_bgp_route_type {
  */
 
 enum bgp_ls_attr_tlv {
-	/* Node Attribute TLVs (RFC 9552 Section 4.3) */
+	/* Node Attribute TLVs (RFC 9552 Section 5.3.1) */
 	BGP_LS_ATTR_NODE_FLAG_BITS = 1024,  /* Node Flag Bits */
 	BGP_LS_ATTR_NODE_NAME = 1026,	    /* Node Name */
 	BGP_LS_ATTR_ISIS_AREA_ID = 1027,    /* IS-IS Area Identifier */
+
+	/* Node Attribute TLVs (RFC 9085 Section 2.1) */
 	BGP_LS_ATTR_SR_CAPABILITIES = 1034, /* SR Capabilities */
 	BGP_LS_ATTR_SR_ALGORITHM = 1035,    /* SR Algorithm */
 	BGP_LS_ATTR_SR_LOCAL_BLOCK = 1036,  /* SR Local Block */
 	BGP_LS_ATTR_SRMS_PREFERENCE = 1037, /* SRMS Preference */
-	BGP_LS_ATTR_NODE_MSD = 1050,	    /* Node MSD */
+
+	/* Node Attribute TLVs (RFC 8814) */
+	BGP_LS_ATTR_NODE_MSD = 266,	    /* Node MSD */
 
 	/* Link Attribute TLVs (RFC 9552 Section 4.3) */
 	BGP_LS_ATTR_IPV4_ROUTER_ID_LOCAL = 1028,      /* IPv4 Router-ID of Local Node */
