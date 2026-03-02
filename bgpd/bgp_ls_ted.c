@@ -284,6 +284,22 @@ bool bgp_ls_populate_prefix_attr(struct ls_prefix *ls_prefix, struct bgp_ls_attr
 		ret = true;
 	}
 
+	/* Prefix-SID (TLV 1158) */
+	if (CHECK_FLAG(ls_prefix->flags, LS_PREF_SR)) {
+		attr->prefix_sid.sid = ls_prefix->sr.sid;
+		attr->prefix_sid.sid_flag = ls_prefix->sr.sid_flag;
+		attr->prefix_sid.algo = ls_prefix->sr.algo;
+		/* IS-IS (RFC 8667, 2.1.1.1); OSPF (RFC 8665, 5); OSPFv3 (RFC 8666, 6) */
+		/* All protocols have same logic: V-Flag and L-Flag are at same positions,
+		 * both can be 1 or 0, when 1 - length is 3, when 0 - length is 4*/
+		if (CHECK_FLAG(attr->prefix_sid.sid_flag, BGP_LS_PREFIX_SID_FLAG_VALUE))
+			attr->prefix_sid.sid_len = 3;
+		else
+			attr->prefix_sid.sid_len = 4;
+		attr->present_tlvs |= (1ULL << BGP_LS_ATTR_PREFIX_SID_BIT);
+		ret = true;
+	}
+
 	return ret;
 }
 

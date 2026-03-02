@@ -336,6 +336,12 @@ enum bgp_ls_attr_tlv {
 #define BGP_LS_PREFIX_FLAG_NODE	      0x08 /* Node Prefix Attached Flag */
 
 /*
+ * IGP Prefix SID Flags (TLV 1158)
+ * RFC 9085 Section 2.3.1
+ */
+#define BGP_LS_PREFIX_SID_FLAG_VALUE 0x08 /* Same for IS-IS, OSPFv2, OSPFv3 */
+
+/*
  * ===========================================================================
  * Descriptor Structures (RFC 9552 Section 5.2)
  * ===========================================================================
@@ -616,6 +622,14 @@ struct bgp_ls_attr {
 	/* OSPF Forwarding Address (TLV 1156) */
 	struct in_addr ospf_fwd_addr;	/* IPv4 */
 	struct in6_addr ospf_fwd_addr6; /* IPv6 */
+
+	/* Prefix-SID (TLV 1158) */
+	struct prefix_sid {
+		uint8_t sid_len;	/* Length of SID - 3 or 4 bytes */
+		uint8_t sid_flag;	/* Segment Routing Flags */
+		uint8_t algo;		/* Algorithm for Segment Routing */
+		uint32_t sid;		/* Segment Routing ID */
+	} prefix_sid;
 
 	/* Opaque Node Attribute (TLV 1025/1097/1157) */
 	uint16_t opaque_len;

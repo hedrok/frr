@@ -435,6 +435,15 @@ int bgp_ls_attr_cmp(const struct bgp_ls_attr *attr1, const struct bgp_ls_attr *a
 			return ret;
 	}
 
+	if (BGP_LS_TLV_CHECK(attr1->present_tlvs, BGP_LS_ATTR_PREFIX_SID_BIT)) {
+		if (attr1->prefix_sid.sid != attr2->prefix_sid.sid)
+			return attr1->prefix_sid.sid - attr2->prefix_sid.sid;
+		if (attr1->prefix_sid.sid_flag != attr2->prefix_sid.sid_flag)
+			return attr1->prefix_sid.sid_flag - attr2->prefix_sid.sid_flag;
+		if (attr1->prefix_sid.algo != attr2->prefix_sid.algo)
+			return attr1->prefix_sid.algo - attr2->prefix_sid.algo;
+	}
+
 	if (attr1->opaque_len != attr2->opaque_len)
 		return attr1->opaque_len - attr2->opaque_len;
 	if (attr1->opaque_len > 0) {
@@ -1327,6 +1336,9 @@ unsigned int bgp_ls_attr_hash_key(const struct bgp_ls_attr *attr)
 		key = jhash_1word(attr->ospf_fwd_addr.s_addr, key);
 		key = jhash(&attr->ospf_fwd_addr6, sizeof(struct in6_addr), key);
 	}
+
+	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_PREFIX_SID_BIT))
+		key = jhash(&attr->prefix_sid, sizeof(attr->prefix_sid), key);
 
 	if (attr->opaque_len > 0)
 		key = jhash(attr->opaque_data, attr->opaque_len, key);
@@ -2371,6 +2383,35 @@ int bgp_ls_encode_attr(struct stream *s, const struct bgp_ls_attr *attr)
 			if (stream_put_tlv(s, BGP_LS_ATTR_OSPF_FWD_ADDR, 16,
 					   &attr->ospf_fwd_addr6) < 0)
 				return -1;
+		}
+	}
+
+	/* Prefix SID (TLV 1158) */
+	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_PREFIX_SID_BIT)) {
+		uint8_t prefix_sid_buf[8];
+		uint32_t sid_be;
+
+		if (attr->prefix_sid.sid_len == 3 || attr->prefix_sid.sid_len == 4) {
+			prefix_sid_buf[0] = attr->prefix_sid.sid_flag;
+			prefix_sid_buf[1] = attr->prefix_sid.algo;
+			/* Reserved = 0 */
+			prefix_sid_buf[2] = 0;
+			prefix_sid_buf[3] = 0;
+			/* SID/Index/Label - three or four bytes */
+			if (attr->prefix_sid.sid_len == 3) {
+				prefix_sid_buf[4] = (attr->prefix_sid.sid >> 16) & 0xFF;
+				prefix_sid_buf[5] = (attr->prefix_sid.sid >> 8) & 0xFF;
+				prefix_sid_buf[6] = attr->prefix_sid.sid & 0xFF;
+			} else if (attr->prefix_sid.sid_len == 4) {
+				sid_be = htonl(attr->prefix_sid.sid);
+				memcpy(&prefix_sid_buf[4], &sid_be, 4);
+			}
+			if (stream_put_tlv(s, BGP_LS_ATTR_PREFIX_SID, 4 + attr->prefix_sid.sid_len, prefix_sid_buf) < 0)
+				return -1;
+		} else {
+			flog_warn(EC_BGP_LS_PACKET,
+					"BGP-LS: %s unexpected value of attr->prefix_sid.sid_len: %u (expected 3 or 4)",
+					__func__, attr->prefix_sid.sid_len);
 		}
 	}
 
@@ -3785,6 +3826,32 @@ static int parse_extended_tag(struct stream *s, uint16_t length, struct bgp_ls_a
 }
 
 /*
+ * Parse Prefix SID (TLV 1158)
+ * RFC 9805 Section 2.3.1
+ */
+static int parse_prefix_sid(struct stream *s, uint16_t length, struct bgp_ls_attr *attr)
+{
+	if (length != 7 && length != 8) {
+		flog_warn(EC_BGP_UPDATE_RCV, "BGP-LS: Invalid Prefix SID length (%u bytes, expected 7 or 8)",
+			  length);
+		return -1;
+	}
+
+	attr->prefix_sid.sid_len = length - 4;
+	attr->prefix_sid.sid_flag = stream_getc(s);
+	attr->prefix_sid.algo = stream_getc(s);
+	/* Reserved, ignore two octets */
+	stream_getc(s);
+	stream_getc(s);
+	attr->prefix_sid.sid = 0;
+	for (int i = 0; i < attr->prefix_sid.sid_len; i++)
+		attr->prefix_sid.sid = (attr->prefix_sid.sid << 8) | stream_getc(s);
+	BGP_LS_TLV_SET(attr->present_tlvs, BGP_LS_ATTR_PREFIX_SID_BIT);
+
+	return 0;
+}
+
+/*
  * Parse BGP-LS Attribute TLVs
  * RFC 9552 Section 5.3.1
  */
@@ -3951,6 +4018,11 @@ int bgp_ls_parse_attr(struct stream *s, uint16_t total_length, struct bgp_ls_att
 
 		case BGP_LS_ATTR_OSPF_FWD_ADDR:
 			if (parse_ospf_fwd_addr(s, length, attr) < 0)
+				return -1;
+			break;
+
+		case BGP_LS_ATTR_PREFIX_SID:
+			if (parse_prefix_sid(s, length, attr) < 0)
 				return -1;
 			break;
 
@@ -4183,6 +4255,17 @@ void bgp_ls_attr_display(struct vty *vty, struct bgp_ls_attr *ls_attr)
 			CHECK_WRAP();
 			vty_out(vty, "Forwarding addr: %pI6", &ls_attr->ospf_fwd_addr6);
 		}
+	}
+
+	/* Prefix SID */
+	if (BGP_LS_TLV_CHECK(ls_attr->present_tlvs, BGP_LS_ATTR_PREFIX_SID_BIT)) {
+		CHECK_WRAP();
+		col += vty_out(vty,
+			"Prefix-SID: %u Flags 0x%x algo %hhu",
+			ls_attr->prefix_sid.sid,
+			ls_attr->prefix_sid.sid_flag,
+			ls_attr->prefix_sid.algo);
+		/* TODO display flags, Label/Index */
 	}
 
 #undef CHECK_WRAP
