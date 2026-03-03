@@ -309,6 +309,15 @@ int bgp_ls_attr_cmp(const struct bgp_ls_attr *attr1, const struct bgp_ls_attr *a
 			return ret;
 	}
 
+	if (BGP_LS_TLV_CHECK(attr1->present_tlvs, BGP_LS_ATTR_SR_CAPABILITIES_BIT)) {
+		if (attr1->srgb.flag != attr2->srgb.flag)
+			return attr1->srgb.flag - attr2->srgb.flag;
+		if (attr1->srgb.lower_bound != attr2->srgb.lower_bound)
+			return attr1->srgb.lower_bound - attr2->srgb.lower_bound;
+		if (attr1->srgb.range_size != attr2->srgb.range_size)
+			return attr1->srgb.range_size - attr2->srgb.range_size;
+	}
+
 	if (BGP_LS_TLV_CHECK(attr1->present_tlvs, BGP_LS_ATTR_IPV4_ROUTER_ID_LOCAL_BIT)) {
 		ret = IPV4_ADDR_CMP(&attr1->ipv4_router_id_local, &attr2->ipv4_router_id_local);
 		if (ret != 0)
@@ -1262,6 +1271,12 @@ unsigned int bgp_ls_attr_hash_key(const struct bgp_ls_attr *attr)
 	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_ISIS_AREA_BIT))
 		key = jhash(attr->isis_area_id, attr->isis_area_id_len, key);
 
+	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_SR_CAPABILITIES_BIT)) {
+		key = jhash(&attr->srgb.flag, sizeof(attr->srgb.flag), key);
+		key = jhash(&attr->srgb.lower_bound, sizeof(attr->srgb.lower_bound), key);
+		key = jhash(&attr->srgb.range_size, sizeof(attr->srgb.range_size), key);
+	}
+
 	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_IPV4_ROUTER_ID_LOCAL_BIT))
 		key = jhash_1word(attr->ipv4_router_id_local.s_addr, key);
 
@@ -2110,6 +2125,19 @@ int bgp_ls_encode_attr(struct stream *s, const struct bgp_ls_attr *attr)
 					   attr->isis_area_id) < 0)
 				return -1;
 		}
+	}
+
+	/* SR Capabilities (TLV 1034) */
+	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_SR_CAPABILITIES_BIT)) {
+		if (stream_put_tlv_hdr(s, BGP_LS_ATTR_SR_CAPABILITIES, 12) < 0)
+			return -1;
+		if (STREAM_WRITEABLE(s) < 12)
+			return -1;
+		stream_putc(s, attr->srgb.flag);
+		stream_putc(s, 0);
+		stream_put3(s, attr->srgb.range_size);
+		stream_put_tlv_hdr(s, BGP_LS_ATTR_SID_LABEL, 3);
+		stream_put3(s, attr->srgb.lower_bound);
 	}
 
 	/* IPv4 Router-ID of Local Node (TLV 1028) */
@@ -3306,6 +3334,44 @@ static int parse_isis_area_id(struct stream *s, uint16_t length, struct bgp_ls_a
 }
 
 /*
+ * Parse SR Capabilities TLV (TLV 1034)
+ * RFC 9085 Section 2.1.2
+ */
+static int parse_sr_capabilities(struct stream *s, uint16_t length, struct bgp_ls_attr *attr)
+{
+	uint32_t t;
+
+	if (length < 12 || (length - 2) % 10 != 0) {
+		flog_warn(EC_BGP_UPDATE_RCV, "BGP-LS: Invalid SR Capabilities length (%u bytes)",
+			  length);
+		return -1;
+	}
+
+	attr->srgb.flag = stream_getc(s);
+	stream_getc(s);	/* Reserved, ignore */
+	attr->srgb.range_size = stream_get3(s);
+	t = stream_getw(s);
+	if (t != BGP_LS_ATTR_SID_LABEL) {
+		flog_warn(EC_BGP_UPDATE_RCV, "BGP-LS: Failed parsing SR Capabilities, SubTLV Type is not 1161");
+		return -1;
+	}
+	t = stream_getw(s);
+	if (t != 3) {
+		flog_warn(EC_BGP_UPDATE_RCV, "BGP-LS: Failed parsing SR Capabilities, SubTLV Length is not 3");
+		return -1;
+	}
+	attr->srgb.lower_bound = stream_get3(s);
+	BGP_LS_TLV_SET(attr->present_tlvs, BGP_LS_ATTR_SR_CAPABILITIES_BIT);
+
+	if (length > 12) {
+		flog_warn(EC_BGP_UPDATE_RCV, "BGP-LS: Only one range in SR Capabilities is supported, ignoring rest");
+		stream_forward_endp(s, length - 12);
+	}
+
+	return 0;
+}
+
+/*
  * Parse Administrative Group TLV (TLV 1088)
  * RFC 5305 Section 3.1
  */
@@ -3886,6 +3952,11 @@ int bgp_ls_parse_attr(struct stream *s, uint16_t total_length, struct bgp_ls_att
 				return -1;
 			break;
 
+		case BGP_LS_ATTR_SR_CAPABILITIES:
+			if (parse_sr_capabilities(s, length, attr) < 0)
+				return -1;
+			break;
+
 		case BGP_LS_ATTR_IPV4_ROUTER_ID_LOCAL:
 			if (parse_ipv4_router_id_local(s, length, attr) < 0)
 				return -1;
@@ -4140,6 +4211,15 @@ void bgp_ls_attr_display(struct vty *vty, struct bgp_ls_attr *ls_attr)
 		CHECK_WRAP();
 		vty_out(vty, "MPLS Protocol Mask: 0x%02x", ls_attr->mpls_protocol_mask);
 		col += 28;
+	}
+
+	/* SR Capabilities */
+	if (BGP_LS_TLV_CHECK(ls_attr->present_tlvs, BGP_LS_ATTR_SR_CAPABILITIES_BIT)) {
+		CHECK_WRAP();
+		col += vty_out(vty, "SR Capabilities: flags 0x%x range %d-%d",
+				ls_attr->srgb.flag,
+				ls_attr->srgb.lower_bound,
+				ls_attr->srgb.lower_bound + ls_attr->srgb.range_size);
 	}
 
 	/* SRLG */
