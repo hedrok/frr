@@ -34,8 +34,10 @@ extern bool bgp_ls_populate_node_attr(struct ls_node *ls_node, struct bgp_ls_att
  * @param ls_attr Link State attributes from TED
  * @param attr BGP-LS link attribute structure to populate
  * @return 0 on success, -1 on error
+ * @param protocol_id - IGP protocol (ISIS/OSPF)
  */
-extern bool bgp_ls_populate_link_attr(struct ls_attributes *ls_attr, struct bgp_ls_attr *attr);
+extern bool bgp_ls_populate_link_attr(struct ls_attributes *ls_attr, struct bgp_ls_attr *attr,
+		uint8_t protocol_id);
 
 /*
  * Populate BGP-LS Attributes from Link State Prefix

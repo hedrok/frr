@@ -587,6 +587,17 @@ struct bgp_ls_attr {
 	/* Link Name (TLV 1098) */
 	char *link_name;
 
+	/* Adjacency SID (TLV 1099) */
+#define BGP_LS_ADJ_MAX	4
+	uint8_t adj_sid_count; /* number of adj_sid elements */
+	struct bgp_ls_adjacency {
+		uint32_t sid;		/* SID as MPLS label or index */
+		uint8_t flags;		/* Flags */
+		uint8_t weight;		/* Administrative weight */
+		uint8_t sid_len;	/* 3 or 4 - label or index, depends on V-Flag that is stored in flags,
+								but in bit 2 for IS-IS and bit 1 for OSPF */
+	} adj_sid[BGP_LS_ADJ_MAX];		/* IPv4/IPv6 & Primary/Backup Adj. SID */
+
 	/* Extended Administrative Group (TLV 1173) */
 	struct admin_group ext_admin_group;
 

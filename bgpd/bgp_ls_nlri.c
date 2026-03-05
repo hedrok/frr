@@ -407,6 +407,19 @@ int bgp_ls_attr_cmp(const struct bgp_ls_attr *attr1, const struct bgp_ls_attr *a
 			return ret;
 	}
 
+	if (BGP_LS_TLV_CHECK(attr1->present_tlvs, BGP_LS_ATTR_ADJ_SID_BIT)) {
+		if (attr1->adj_sid_count != attr2-> adj_sid_count)
+			return attr1->adj_sid_count - attr2->adj_sid_count;
+		for (int i = 0; i < attr1->adj_sid_count; i++) {
+			if (attr1->adj_sid[i].sid != attr2->adj_sid[i].sid)
+				return attr1->adj_sid[i].sid - attr2->adj_sid[i].sid;
+			if (attr1->adj_sid[i].flags != attr2->adj_sid[i].flags)
+				return attr1->adj_sid[i].flags - attr2->adj_sid[i].flags;
+			if (attr1->adj_sid[i].weight != attr2->adj_sid[i].weight)
+				return attr1->adj_sid[i].weight - attr2->adj_sid[i].weight;
+		}
+	}
+
 	if (BGP_LS_TLV_CHECK(attr1->present_tlvs, BGP_LS_ATTR_IGP_FLAGS_BIT)) {
 		if (attr1->igp_flags != attr2->igp_flags)
 			return attr1->igp_flags - attr2->igp_flags;
@@ -1328,6 +1341,15 @@ unsigned int bgp_ls_attr_hash_key(const struct bgp_ls_attr *attr)
 
 	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_LINK_NAME_BIT))
 		key = jhash(attr->link_name, strlen(attr->link_name), key);
+
+	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_ADJ_SID_BIT)) {
+		key = jhash(&attr->adj_sid_count, sizeof(attr->adj_sid_count), key);
+		for (int i = 0; i < attr->adj_sid_count; i++) {
+			key = jhash(&attr->adj_sid[i].sid, sizeof(attr->adj_sid[i].sid), key);
+			key = jhash(&attr->adj_sid[i].flags, sizeof(attr->adj_sid[i].flags), key);
+			key = jhash(&attr->adj_sid[i].weight, sizeof(attr->adj_sid[i].weight), key);
+		}
+	}
 
 	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_IGP_FLAGS_BIT))
 		key = jhash_1word(attr->igp_flags, key);
@@ -2270,6 +2292,22 @@ int bgp_ls_encode_attr(struct stream *s, const struct bgp_ls_attr *attr)
 				return -1;
 		}
 	}
+
+	/* Adjacency SID (TLV 1099) */
+	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_ADJ_SID_BIT))
+		for (int i = 0; i < attr->adj_sid_count; i++) {
+			if (stream_put_tlv_hdr(s, BGP_LS_ATTR_ADJ_SID, attr->adj_sid[i].sid_len + 4) < 0)
+				return -1;
+			if (STREAM_WRITEABLE(s) < attr->adj_sid[i].sid_len + 4)
+				return -1;
+			stream_putc(s, attr->adj_sid[i].flags);
+			stream_putc(s, attr->adj_sid[i].weight);
+			stream_putw(s, 0);
+			if (attr->adj_sid[i].sid_len == 3)
+				stream_put3(s, attr->adj_sid[i].sid);
+			else
+				stream_putl(s, attr->adj_sid[i].sid);
+		}
 
 	/* Extended Admin Group (TLV 1173) */
 	if (BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_EXT_ADMIN_GROUP_BIT)) {
@@ -3542,6 +3580,41 @@ static int parse_link_name(struct stream *s, uint16_t length, struct bgp_ls_attr
 }
 
 /*
+ * Parse Adjacency SID (TLV 1099)
+ * RFC 9085 Section 2.2.1
+ */
+static int parse_adjacency_sid(struct stream *s, uint16_t length, struct bgp_ls_attr *attr)
+{
+	if (length != 7 && length != 8) {
+		flog_warn(EC_BGP_UPDATE_RCV, "BGP-LS: Invalid Adjacency SID length (%u bytes)",
+			  length);
+		return -1;
+	}
+
+	if (!BGP_LS_TLV_CHECK(attr->present_tlvs, BGP_LS_ATTR_ADJ_SID_BIT))
+		attr->adj_sid_count = 0;
+
+	if (attr->adj_sid_count == BGP_LS_ADJ_MAX) {
+		flog_warn(EC_BGP_UPDATE_RCV, "BGP-LS: Ignoring Adjacency SID, maximum %d is implemented",
+			  BGP_LS_ADJ_MAX);
+		stream_forward_endp(s, length);
+		return 0;
+	}
+
+	attr->adj_sid[attr->adj_sid_count].sid_len = length - 4;
+	attr->adj_sid[attr->adj_sid_count].flags = stream_getc(s);
+	attr->adj_sid[attr->adj_sid_count].weight = stream_getc(s);
+	stream_getw(s); /* Reserved, ignored */
+	if (attr->adj_sid[attr->adj_sid_count].sid_len)
+		attr->adj_sid[attr->adj_sid_count].sid = stream_get3(s);
+	else
+		attr->adj_sid[attr->adj_sid_count].sid = stream_getl(s);
+	BGP_LS_TLV_SET(attr->present_tlvs, BGP_LS_ATTR_ADJ_SID_BIT);
+
+	return 0;
+}
+
+/*
  * Parse Extended Admin Group TLV (TLV 1173)
  */
 static int parse_ext_admin_group(struct stream *s, uint16_t length, struct bgp_ls_attr *attr)
@@ -4027,6 +4100,11 @@ int bgp_ls_parse_attr(struct stream *s, uint16_t total_length, struct bgp_ls_att
 				return -1;
 			break;
 
+		case BGP_LS_ATTR_ADJ_SID:
+			if (parse_adjacency_sid(s, length, attr) < 0)
+				return -1;
+			break;
+
 		case BGP_LS_ATTR_UNIDIRECTIONAL_LINK_DELAY:
 			if (parse_link_delay(s, length, attr) < 0)
 				return -1;
@@ -4238,6 +4316,17 @@ void bgp_ls_attr_display(struct vty *vty, struct bgp_ls_attr *ls_attr)
 		CHECK_WRAP();
 		vty_out(vty, "Link Name: %s", ls_attr->link_name);
 		col += 12 + strlen(ls_attr->link_name);
+	}
+
+	/* Adjacency SID */
+	if (BGP_LS_TLV_CHECK(ls_attr->present_tlvs, BGP_LS_ATTR_ADJ_SID_BIT)) {
+		for (int i = 0; i < ls_attr->adj_sid_count; i++) {
+			CHECK_WRAP();
+			col += vty_out(vty, "Adjacency-SID: %u Flags: 0x%x Weight: 0x%x",
+					ls_attr->adj_sid[i].sid,
+					ls_attr->adj_sid[i].flags,
+					ls_attr->adj_sid[i].weight);
+		}
 	}
 
 	/* Performance Metrics - Link Delay */

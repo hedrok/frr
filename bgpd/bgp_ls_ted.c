@@ -86,10 +86,56 @@ bool bgp_ls_populate_node_attr(struct ls_node *ls_node, struct bgp_ls_attr *attr
  * ===========================================================================
  */
 
+static void populate_adj_sid(struct ls_attributes *ls_attr, int index,
+		int flag, struct bgp_ls_attr *attr,
+		uint8_t protocol_id)
+{
+	if (!CHECK_FLAG(ls_attr->flags, flag)) {
+		return;
+	}
+	if (attr->adj_sid_count == BGP_LS_ADJ_MAX) {
+		zlog_warn("BGP-LS: %s maximum supported number of Adjacency SID is 4, ignoring others", __func__);
+		return;
+	}
+
+	uint8_t vflg_mask;
+
+	/* See EXT_SUBTLV_LINK_ADJ_SID_VFLG in isisd/isis_tlvs.h and
+	 * ospfd/ospf_sr.h - unfortunately macro names are identical.
+	 * IS-IS RFC 8667, 2.2.1
+	 * OSPFv2 RFC 8665, 6.1
+	 * OSPFv3 RFC 8666, 7.1
+	 */
+#define ISIS_EXT_SUBTLV_LINK_ADJ_SID_VFLG 0x20
+#define OSPF_EXT_SUBTLV_LINK_ADJ_SID_VFLG 0x40
+	switch (protocol_id) {
+		case BGP_LS_PROTO_ISIS_L1:
+		case BGP_LS_PROTO_ISIS_L2:
+			vflg_mask = ISIS_EXT_SUBTLV_LINK_ADJ_SID_VFLG;
+			break;
+		case BGP_LS_PROTO_OSPFV2:
+		case BGP_LS_PROTO_OSPFV3:
+			vflg_mask = OSPF_EXT_SUBTLV_LINK_ADJ_SID_VFLG;
+			break;
+		default:
+			zlog_warn("BGP-LS: %s unsupported protocol %d", __func__, protocol_id);
+			return;
+	}
+
+	attr->adj_sid[attr->adj_sid_count].sid = ls_attr->adj_sid[index].sid;
+	attr->adj_sid[attr->adj_sid_count].flags = ls_attr->adj_sid[index].flags;
+	attr->adj_sid[attr->adj_sid_count].weight = ls_attr->adj_sid[index].weight;
+	attr->adj_sid[attr->adj_sid_count].sid_len = ls_attr->adj_sid[index].flags & vflg_mask ? 3 : 4;
+	attr->adj_sid_count++;
+
+	attr->present_tlvs |= (1ULL << BGP_LS_ATTR_ADJ_SID_BIT);
+}
+
 /*
  * Populate BGP-LS Attributes from Link State Attributes
  */
-bool bgp_ls_populate_link_attr(struct ls_attributes *ls_attr, struct bgp_ls_attr *attr)
+bool bgp_ls_populate_link_attr(struct ls_attributes *ls_attr, struct bgp_ls_attr *attr,
+		uint8_t protocol_id)
 {
 	bool ret = false;
 
@@ -170,6 +216,13 @@ bool bgp_ls_populate_link_attr(struct ls_attributes *ls_attr, struct bgp_ls_attr
 		attr->present_tlvs |= (1ULL << BGP_LS_ATTR_LINK_NAME_BIT);
 		ret = true;
 	}
+
+	/* Adjacency SID (TLV 1099) */
+	attr->adj_sid_count = 0;
+	populate_adj_sid(ls_attr, ADJ_PRI_IPV4, LS_ATTR_ADJ_SID, attr, protocol_id);
+	populate_adj_sid(ls_attr, ADJ_BCK_IPV4, LS_ATTR_BCK_ADJ_SID, attr, protocol_id);
+	populate_adj_sid(ls_attr, ADJ_PRI_IPV6, LS_ATTR_ADJ_SID6, attr, protocol_id);
+	populate_adj_sid(ls_attr, ADJ_BCK_IPV6, LS_ATTR_BCK_ADJ_SID6, attr, protocol_id);
 
 	/* Remote IPv4 Router-ID (TLV 1030) */
 	if (CHECK_FLAG(ls_attr->flags, LS_ATTR_REMOTE_ADDR)) {
@@ -602,7 +655,7 @@ int bgp_ls_originate_link(struct bgp *bgp, uint8_t protocol_id, uint8_t *local_r
 
 	/* Populate BGP-LS attributes from Link State edge */
 	ls_attr = bgp_ls_attr_alloc();
-	if (!bgp_ls_populate_link_attr(edge->attributes, ls_attr)) {
+	if (!bgp_ls_populate_link_attr(edge->attributes, ls_attr, protocol_id)) {
 		/* No BGP-LS Attributes to encode */
 		bgp_ls_attr_free(ls_attr);
 		ls_attr = NULL;
