@@ -10,6 +10,7 @@
 #include "bgpd/bgp_ls_nlri.h"
 #include "bgpd/bgp_errors.h"
 #include "bgpd/bgp_debug.h"
+#include "lib/iso.h"
 
 DEFINE_MTYPE_STATIC(BGPD, BGP_LS_NLRI, "BGP-LS NLRI");
 DEFINE_MTYPE(BGPD, BGP_LS_ATTR, "BGP-LS Attribute");
@@ -4219,6 +4220,15 @@ void bgp_ls_attr_display(struct vty *vty, struct bgp_ls_attr *ls_attr)
 		CHECK_WRAP();
 		vty_out(vty, "Node Name: %s", ls_attr->node_name ? ls_attr->node_name : "(null)");
 		col += 11 + (ls_attr->node_name ? strlen(ls_attr->node_name) : 6);
+	}
+
+	/* IS-IS Area Identifier */
+	if (BGP_LS_TLV_CHECK(ls_attr->present_tlvs, BGP_LS_ATTR_ISIS_AREA_BIT)) {
+		CHECK_WRAP();
+		struct iso_address addr;
+		addr.addr_len = ls_attr->isis_area_id_len;
+		memcpy(addr.area_addr, ls_attr->isis_area_id, ls_attr->isis_area_id_len);
+		col += vty_out(vty, "IS-IS Area ID: %pIS", &addr);
 	}
 
 	/* Local TE Router-ID (IPv4) */
