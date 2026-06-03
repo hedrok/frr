@@ -30,64 +30,64 @@ graph test_evpn_anycast_macvlan {
     style=filled,
   ];
 
-  host11 [
+  host1 [
     shape=rectangle,
-    label="host11\n192.168.1.10/24",
+    label="host1\n192.168.10.10/24",
     fillcolor="#4f4f4f",
     style=filled,
   ];
-  host12 [
+  host2 [
     shape=rectangle,
-    label="host12\n192.168.2.10/24",
+    label="host2\n192.168.20.10/24",
     fillcolor="#4f4f4f",
     style=filled,
   ];
-  host21 [
+  host3 [
     shape=rectangle,
-    label="host21\n192.168.1.20/24",
+    label="host3\n192.168.10.20/24",
     fillcolor="#4f4f4f",
     style=filled,
   ];
-  host22 [
+  host4 [
     shape=rectangle,
-    label="host22\n192.168.2.20/24",
+    label="host4\n192.168.20.20/24",
     fillcolor="#4f4f4f",
     style=filled,
   ];
 
   # Switches
-  s11 [
+  s1 [
     shape=oval,
-    label="s11",
+    label="s1",
     fillcolor="#d0e0d0",
     style=filled,
   ];
-  s12 [
+  s2 [
     shape=oval,
-    label="s12",
+    label="s2",
     fillcolor="#d0e0d0",
     style=filled,
   ];
-  s21 [
+  s3 [
     shape=oval,
-    label="s21",
+    label="s3",
     fillcolor="#d0e0d0",
     style=filled,
   ];
-  s22 [
+  s4 [
     shape=oval,
-    label="s22",
+    label="s4",
     fillcolor="#d0e0d0",
     style=filled,
   ];
 
   # Connections
-  r1 -- s11
-  r1 -- s12
-  r2 -- s21
-  r2 -- s22
-  s11 -- host11
-  s12 -- host12
-  s21 -- host21
-  s22 -- host22
+  r1 -- s1
+  r1 -- s2
+  r2 -- s3
+  r2 -- s4
+  s1 -- host1
+  s2 -- host2
+  s3 -- host3
+  s4 -- host4
 }

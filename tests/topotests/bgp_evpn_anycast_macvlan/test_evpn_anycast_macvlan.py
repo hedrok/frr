@@ -45,17 +45,24 @@ from lib.topolog import logger
 
 
 host_ips = {
-    "host11": "192.168.1.10",
-    "host12": "192.168.2.10",
-    "host21": "192.168.1.20",
-    "host22": "192.168.2.20",
+    "host1": "192.168.10.10",
+    "host2": "192.168.20.10",
+    "host3": "192.168.10.20",
+    "host4": "192.168.20.20",
 }
 
 host_mac_map = {
-    "host11": "00:50:79:66:68:11",
-    "host12": "00:50:79:66:68:12",
-    "host21": "00:50:79:66:68:21",
-    "host22": "00:50:79:66:68:22",
+    "host1": "00:50:79:66:68:01",
+    "host2": "00:50:79:66:68:02",
+    "host3": "00:50:79:66:68:03",
+    "host4": "00:50:79:66:68:04",
+}
+
+host_vni_map = {
+    "host1": "10",
+    "host2": "20",
+    "host3": "10",
+    "host4": "20",
 }
 
 hosts = list(host_mac_map.keys())
@@ -66,39 +73,39 @@ def build_topo(tgen):
     """
     EVPN Anycast Topology -
     1. Two gateways: r1, r2
-    2. Four hosts: host11, host12, host21, host22
-        Hosts host1* are connected to r1, hosts host2* - to r2
-        Hosts host*1 are in 192.168.1.0/24 network
-        Hosts host*2 are in 192.168.2.0/24 network
+    2. Four hosts: host1, host2, host3, host4
+        Hosts host1, host2 are connected to r1, hosts host3, host4 - to r2
+        Hosts host1 and host3 are in 192.168.10.0/24 network
+        Hosts host2 and host4 are in 192.168.20.0/24 network
     """
 
     tgen.add_router("r1")
     tgen.add_router("r2")
-    tgen.add_router("host11")
-    tgen.add_router("host12")
-    tgen.add_router("host21")
-    tgen.add_router("host22")
+    tgen.add_router("host1")
+    tgen.add_router("host2")
+    tgen.add_router("host3")
+    tgen.add_router("host4")
 
     # Create switches
     switch = tgen.add_switch("sr1r2")
     switch.add_link(tgen.gears["r1"])
     switch.add_link(tgen.gears["r2"])
 
-    switch = tgen.add_switch("s11")
+    switch = tgen.add_switch("s1")
     switch.add_link(tgen.gears["r1"])
-    switch.add_link(tgen.gears["host11"])
+    switch.add_link(tgen.gears["host1"])
 
-    switch = tgen.add_switch("s12")
+    switch = tgen.add_switch("s2")
     switch.add_link(tgen.gears["r1"])
-    switch.add_link(tgen.gears["host12"])
+    switch.add_link(tgen.gears["host2"])
 
-    switch = tgen.add_switch("s21")
+    switch = tgen.add_switch("s3")
     switch.add_link(tgen.gears["r2"])
-    switch.add_link(tgen.gears["host21"])
+    switch.add_link(tgen.gears["host3"])
 
-    switch = tgen.add_switch("s22")
+    switch = tgen.add_switch("s4")
     switch.add_link(tgen.gears["r2"])
-    switch.add_link(tgen.gears["host22"])
+    switch.add_link(tgen.gears["host4"])
 
 
 def router_compare_json_output(rname, command, reference, count=130, wait=1):
@@ -125,23 +132,14 @@ def router_compare_json_output(rname, command, reference, count=130, wait=1):
 #####################################################
 
 
-def config_vrf(node):
-    """
-    Create VRF on node
-    """
-    node.cmd_raises("ip link add RED type vrf table 111")
-    node.cmd_raises("ip link set dev RED up")
-
-
 def config_bridge(node):
     """
     Create a VLAN aware bridge
     """
     node.cmd_raises("ip link add dev br0 type bridge")
     node.cmd_raises("ip link set dev br0 type bridge vlan_filtering 1")
-    node.cmd_raises("/sbin/bridge vlan add dev br0 vid 100 self")
-    node.cmd_raises("/sbin/bridge vlan add dev br0 vid 200 self")
-    node.cmd_raises("/sbin/bridge vlan add dev br0 vid 1000 self")
+    node.cmd_raises("/sbin/bridge vlan add dev br0 vid 10 self")
+    node.cmd_raises("/sbin/bridge vlan add dev br0 vid 20 self")
     node.cmd_raises("ip link set dev br0 up")
     node.cmd_raises("/sbin/bridge fdb add 00:aa:aa:aa:aa:aa dev br0 self local")
 
@@ -151,7 +149,7 @@ def config_interface_vid(node, ifname, vid):
     node.cmd_raises(f"/sbin/bridge link set dev {ifname} isolated off")
     node.cmd_raises(f"/sbin/bridge vlan del dev {ifname} vid 1 master")
     node.cmd_raises(
-        f"/sbin/bridge vlan add dev {ifname} vid {vid} pvid untagged master"
+        f"/sbin/bridge vlan add dev {ifname} vid {vid} master"
     )
 
 
@@ -169,22 +167,20 @@ def config_vxlan(node, lo_addr):
 
 
 def config_vlan(node, vid):
-    node.cmd_raises(f"ip link add link br0 name br0.{vid} type vlan id {vid}")
-    node.cmd_raises(f"ip link set dev br0.{vid} master RED")
-    node.cmd_raises(f"ip link set dev br0.{vid} up")
+    node.cmd_raises(f"ip link add link br0 name vlan{vid} type vlan id {vid}")
+    node.cmd_raises(f"ip link set dev vlan{vid} up")
     node.cmd_raises(f"/sbin/bridge vlan add dev vxlan0 vid {vid}")
     node.cmd_raises(f"/sbin/bridge vlan add dev vxlan0 vid {vid} tunnel_info id {vid}")
-
+    node.cmd_raises(f"sysctl -w net.ipv4.conf.vlan{vid}.arp_ignore=8")
 
 def config_macvlan(node, vid, addr):
     node.cmd_raises(
-        f"ip link add macvlan{vid} link br0.{vid} type macvlan mode private"
+        f"ip link add vlan{vid}agw link vlan{vid} type macvlan mode private"
     )
-    node.cmd_raises(f"ip link set dev macvlan{vid} address 00:aa:aa:aa:aa:aa")
-    node.cmd_raises(f"ip link set dev macvlan{vid} master RED")
-    node.cmd_raises(f"ip addr add {addr}/24 dev macvlan{vid} brd +")
-    node.cmd_raises(f"ip link set dev macvlan{vid} up")
-    node.cmd_raises(f"/sbin/sysctl -w net.ipv4.conf.macvlan{vid}.arp_accept=1")
+    node.cmd_raises(f"ip link set dev vlan{vid}agw address 00:aa:aa:aa:aa:aa")
+    node.cmd_raises(f"ip addr add {addr}/24 dev vlan{vid}agw brd +")
+    node.cmd_raises(f"ip link set dev vlan{vid}agw up")
+    node.cmd_raises(f"/sbin/sysctl -w net.ipv4.conf.vlan{vid}agw.arp_accept=1")
 
 
 def config_lo(node, lo_addr):
@@ -193,16 +189,14 @@ def config_lo(node, lo_addr):
 
 
 def config_router(node, name, lo_addr):
-    config_vrf(node)
     config_bridge(node)
-    config_interface_vid(node, f"{name}-eth1", 100)
-    config_interface_vid(node, f"{name}-eth2", 200)
+    config_interface_vid(node, f"{name}-eth1", 10)
+    config_interface_vid(node, f"{name}-eth2", 20)
     config_vxlan(node, lo_addr)
-    config_vlan(node, 100)
-    config_vlan(node, 200)
-    config_vlan(node, 1000)
-    config_macvlan(node, 100, "192.168.1.1")
-    config_macvlan(node, 200, "192.168.2.1")
+    config_vlan(node, 10)
+    config_vlan(node, 20)
+    config_macvlan(node, 10, "192.168.10.1")
+    config_macvlan(node, 20, "192.168.20.1")
     config_lo(node, lo_addr)
 
 
@@ -213,8 +207,11 @@ def config_host(host_name, host):
     ifname = host_name + "-eth0"
     host_ip = host_ips[host_name]
     host_mac = host_mac_map[host_name]
-    host.run(f"ip addr add {host_ip}/24 dev {ifname}")
-    host.run(f"ip link set dev {ifname} address {host_mac}")
+    host_vni = host_vni_map[host_name]
+    host.cmd_raises(f"ip link set dev {ifname} address {host_mac}")
+    host.cmd_raises(f"ip link add link {ifname} name {ifname}.{host_vni} type vlan id {host_vni}")
+    host.cmd_raises(f"ip addr add {host_ip}/24 dev {ifname}.{host_vni}")
+    host.cmd_raises(f"ip link set dev {ifname}.{host_vni} up")
 
 
 def config_hosts(tgen):
@@ -261,8 +258,8 @@ def test_ping_all_hosts(tgen):
 
 def test_evpn_arp_cache(tgen):
     # Fill in arp-cache by ping
-    check_ping("host11", host_ips["host22"], True, 130, 1)
-    check_ping("host12", host_ips["host21"], True, 30, 1)
+    check_ping("host1", host_ips["host4"], True, 130, 1)
+    check_ping("host2", host_ips["host3"], True, 30, 1)
     # Check
     for router in routers:
         router_compare_json_output(
