@@ -5475,6 +5475,30 @@ void zebra_vxlan_macvlan_up(struct interface *ifp)
 		/* process oper-up */
 		if (is_l3vni_oper_up(zl3vni))
 			zebra_vxlan_process_l3vni_oper_up(zl3vni);
+	} else {
+		/* Anycast gateway (VRR) macvlan on an L2-VNI SVI: re-install
+		 * the remote neighbors so a macvlan that appears after they
+		 * were learned gets its entries too.
+		 */
+		struct zebra_evpn *zevpn;
+		struct zebra_neigh *n;
+
+		zevpn = zebra_evpn_from_svi(link_ifp, link_if);
+		if (!zevpn)
+			return;
+
+		/* Only the anycast gateway interface itself coming up warrants
+		 * the re-install walk, not any other macvlan on the SVI.
+		 */
+		if (zebra_get_vrr_intf_for_svi(link_ifp) != ifp)
+			return;
+
+		if (IS_ZEBRA_DEBUG_VXLAN)
+			zlog_debug("macvlan %s(%u) VNI %u is UP, installing neighbors", ifp->name,
+				   ifp->ifindex, zevpn->vni);
+
+		frr_each (zebra_neigh_db, zevpn->neigh_table, n)
+			zebra_evpn_install_neigh_hash(zevpn, n);
 	}
 }
 

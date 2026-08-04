@@ -858,6 +858,13 @@ void if_handle_vrf_change(struct interface *ifp, vrf_id_t vrf_id)
 	/* Send out notification on interface VRF change. */
 	/* This is to issue an ADD, if needed. */
 	zebra_interface_vrf_update_add(ifp, old_vrf_id);
+
+	/* A macvlan enslaved into a tenant VRF may only now qualify as the
+	 * anycast gateway (VRR) interface of its SVI; a VRF change does not
+	 * re-run if_up, so give it the same treatment as coming up.
+	 */
+	if (vrf_id != VRF_DEFAULT && ifp->info && IS_ZEBRA_IF_MACVLAN(ifp) && if_is_operative(ifp))
+		zebra_vxlan_macvlan_up(ifp);
 }
 
 static void ipv6_ll_address_to_mac(struct in6_addr *address, uint8_t *mac)
