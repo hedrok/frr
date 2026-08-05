@@ -4,30 +4,15 @@
  * Copyright (C) 2016, 2017 Cumulus Networks, Inc.
  */
 
-/* Get the VRR interface for SVI if any */
-static inline struct interface *
-zebra_get_vrr_intf_for_svi(struct interface *ifp)
+/* Get the VRR interface for SVI if any. The association is authoritative:
+ * it is re-elected on every event that can change it, so a non-NULL value
+ * is a macvlan stacked on the SVI in the SVI's own VRF.
+ */
+static inline struct interface *zebra_get_vrr_intf_for_svi(struct interface *ifp)
 {
-	struct zebra_vrf *zvrf = NULL;
-	struct interface *tmp_if = NULL;
-	struct zebra_if *zif = NULL;
+	struct zebra_if *zif = ifp->info;
 
-	zvrf = ifp->vrf->info;
-	assert(zvrf);
-
-	FOR_ALL_INTERFACES (zvrf->vrf, tmp_if) {
-		zif = tmp_if->info;
-		if (!zif)
-			continue;
-
-		if (!IS_ZEBRA_IF_MACVLAN(tmp_if))
-			continue;
-
-		if (zif->link == ifp)
-			return tmp_if;
-	}
-
-	return NULL;
+	return zif ? zif->vrr_if : NULL;
 }
 
 /* EVPN<=>vxlan_zif association */
