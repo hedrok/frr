@@ -48,6 +48,7 @@ DEFINE_HOOK(zebra_if_extra_info, (struct vty * vty, json_object *json_if, struct
 DEFINE_MTYPE_STATIC(ZEBRA, ZIF_DESC, "Intf desc");
 
 static void if_down_del_nbr_connected(struct interface *ifp);
+static void zebra_if_vrr_elect(struct interface *ifp, const struct interface *exclude);
 
 static const char *if_zebra_data_state(uint8_t state)
 {
@@ -215,6 +216,14 @@ static int if_zebra_delete_hook(struct interface *ifp)
 
 	if (ifp->info) {
 		zebra_if = ifp->info;
+
+		/* Only a macvlan can be the elected anycast gateway (VRR)
+		 * interface, so only a macvlan's deletion can change an
+		 * election. The association must not outlive this interface:
+		 * re-elect for the device below it, without this one.
+		 */
+		if (IS_ZEBRA_IF_MACVLAN(ifp) && zebra_if->link)
+			zebra_if_vrr_elect(zebra_if->link, ifp);
 
 		/* If we set protodown, clear our reason now from the kernel */
 		if (ZEBRA_IF_IS_PROTODOWN(zebra_if) && zebra_if->protodown_rc &&
@@ -859,6 +868,21 @@ void if_handle_vrf_change(struct interface *ifp, vrf_id_t vrf_id)
 	/* This is to issue an ADD, if needed. */
 	zebra_interface_vrf_update_add(ifp, old_vrf_id);
 
+	/* Whether a macvlan qualifies as the anycast gateway (VRR) interface
+	 * of the interface below it depends on both of their VRFs, so this
+	 * move can have changed the association in either direction: for a
+	 * macvlan re-elect below it, for anything else re-elect on it. Has to
+	 * happen before the macvlan is processed, which relies on it.
+	 */
+	if (ifp->info) {
+		struct zebra_if *zif = ifp->info;
+
+		if (IS_ZEBRA_IF_MACVLAN(ifp))
+			zebra_if_vrr_elect(zif->link, NULL);
+		else
+			zebra_if_vrr_elect(ifp, NULL);
+	}
+
 	/* A macvlan enslaved into a tenant VRF may only now qualify as the
 	 * anycast gateway (VRR) interface of its SVI; a VRF change does not
 	 * re-run if_up, so give it the same treatment as coming up.
@@ -1120,16 +1144,86 @@ void if_refresh(struct interface *ifp)
 #endif
 }
 
-void zebra_if_update_link(struct interface *ifp, ifindex_t link_ifindex,
-			  ns_id_t ns_id)
+/* Re-elect the macvlan acting as ifp's anycast gateway (VRR) interface:
+ * scan for a macvlan stacked on ifp, skipping 'exclude' (an interface that
+ * is about to go away). Only a macvlan in ifp's own VRF qualifies: one in a
+ * different VRF (e.g. still on its way into the tenant VRF while being
+ * provisioned) cannot serve as ifp's anycast gateway and is not considered -
+ * the VRF change re-runs this election. Runs on every event that can change
+ * the outcome - a macvlan stacked on or unstacked from ifp, a VRF change of
+ * ifp or of one of its macvlans, and the removal of 'exclude' - so that the
+ * association never has to be recomputed on the hot path.
+ */
+static void zebra_if_vrr_elect(struct interface *ifp, const struct interface *exclude)
 {
+	struct interface *tmp_if;
+	struct zebra_if *tmp_zif;
 	struct zebra_if *zif;
 
+	if (!ifp)
+		return;
+
+	zif = ifp->info;
+	if (!zif)
+		return;
+
+	zif->vrr_if = NULL;
+
+	/* Elections are held for the lower device macvlans are stacked on (an
+	 * SVI in the EVPN case, but any interface type can carry a macvlan),
+	 * never for a macvlan itself; the kernel does not stack macvlans on
+	 * macvlans. One can still arrive here because of a BUG in zebra's
+	 * link resolution: a cross-namespace IFLA_LINK (e.g. a veth's peer
+	 * ifindex) is mis-resolved against the local ifindex table, since
+	 * zebra_ns_lookup() falls back to the default NS for unknown nsids,
+	 * so an arbitrary unrelated local interface - possibly a macvlan -
+	 * ends up as such a device's 'link'. Once that bug is fixed, this
+	 * early return must become an assert.
+	 */
+	if (IS_ZEBRA_IF_MACVLAN(ifp))
+		return;
+
+	FOR_ALL_INTERFACES (ifp->vrf, tmp_if) {
+		tmp_zif = tmp_if->info;
+		if (!tmp_zif || tmp_if == exclude)
+			continue;
+
+		if (!IS_ZEBRA_IF_MACVLAN(tmp_if))
+			continue;
+
+		if (tmp_zif->link != ifp)
+			continue;
+
+		zif->vrr_if = tmp_if;
+		return;
+	}
+}
+
+/* A stacked interface's lower device changed from old_link to new_link:
+ * kernel re-parenting, or the lower device coming into or going out of
+ * zebra's view. Either lower device may thereby have gained or lost the
+ * macvlan stacked on it, so the anycast gateway (VRR) election is redone
+ * on both.
+ */
+static void zebra_if_vrr_update(struct interface *old_link, struct interface *new_link)
+{
+	if (old_link != new_link)
+		zebra_if_vrr_elect(old_link, NULL);
+
+	zebra_if_vrr_elect(new_link, NULL);
+}
+
+void zebra_if_update_link(struct interface *ifp, ifindex_t link_ifindex, ns_id_t ns_id)
+{
+	struct zebra_if *zif;
+	struct interface *old_link;
+
 	zif = (struct zebra_if *)ifp->info;
+	old_link = zif->link;
 	zif->link_nsid = ns_id;
 	zif->link_ifindex = link_ifindex;
-	zif->link = if_lookup_by_index_per_ns(zebra_ns_lookup(ns_id),
-					      link_ifindex);
+	zif->link = if_lookup_by_index_per_ns(zebra_ns_lookup(ns_id), link_ifindex);
+	zebra_if_vrr_update(old_link, zif->link);
 }
 
 /*
@@ -1152,19 +1246,17 @@ static int zif_link_fixup_cb(struct interface *ifp, void *arg)
 
 	/* update SVI linkages */
 	if ((zif->link_ifindex != IFINDEX_INTERNAL) && !zif->link) {
-		zif->link = if_lookup_by_index_per_nsid(zif->link_nsid,
-							zif->link_ifindex);
+		zif->link = if_lookup_by_index_per_nsid(zif->link_nsid, zif->link_ifindex);
+		zebra_if_vrr_update(NULL, zif->link);
 		if (IS_ZEBRA_DEBUG_KERNEL)
-			zlog_debug("interface %s/%d's lower fixup to %s/%d",
-				   ifp->name, ifp->ifindex,
-				   zif->link ? zif->link->name : "unk",
+			zlog_debug("interface %s/%d's lower fixup to %s/%d", ifp->name,
+				   ifp->ifindex, zif->link ? zif->link->name : "unk",
 				   zif->link_ifindex);
 	}
 
 	/* Update VLAN<=>SVI map */
 	if (IS_ZEBRA_IF_VLAN(ifp))
-		zebra_evpn_acc_bd_svi_set(zif, NULL,
-					  !!if_is_operative(ifp));
+		zebra_evpn_acc_bd_svi_set(zif, NULL, !!if_is_operative(ifp));
 
 	return NS_WALK_CONTINUE;
 }

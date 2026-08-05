@@ -190,10 +190,24 @@ struct zebra_if {
 	/* list of zebra_mac entries using this interface as destination */
 	struct list *mac_list;
 
-	/* Link fields - for sub-interfaces. */
+	/* Link fields - for stacked interfaces: the lower device this
+	 * interface sits on, as reported by the kernel (IFLA_LINK). E.g. the
+	 * bridge for a VLAN subinterface, the SVI for a macvlan, the underlay
+	 * interface for a vxlan device. 'link' is the resolved pointer and can
+	 * lag behind 'link_ifindex': it is NULL until the lower device is
+	 * known to zebra, and is cleared when the lower device is deleted.
+	 */
 	ns_id_t link_nsid;
 	ifindex_t link_ifindex;
 	struct interface *link;
+
+	/* The macvlan stacked on this interface that acts as its anycast
+	 * gateway (VRR) interface; NULL if none qualifies. Only a macvlan in
+	 * this interface's own VRF qualifies. Authoritative: re-elected on
+	 * every stacking, VRF and deletion event that can change the outcome,
+	 * and consumed without re-validation.
+	 */
+	struct interface *vrr_if;
 
 #define INTERFACE_SPEED_ERROR_READ    -1
 #define INTERFACE_SPEED_ERROR_UNKNOWN -2
