@@ -161,4 +161,6 @@ ENV PATH "$PATH:/opt/topotests"
 RUN echo "cat /opt/topotests/motd.txt" >> /root/.profile && \
       echo "export PS1='(topotests) $PS1'" >> /root/.profile
 
+RUN python3 -m pip install 'netns'
+
 ENTRYPOINT [ "bash", "/opt/topotests/entrypoint.sh" ]

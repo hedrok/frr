@@ -11,7 +11,7 @@ import logging
 import re
 import sys
 
-from scapy.all import conf, srp
+from scapy.all import conf, srp, sendp
 
 conf.verb = 0
 
@@ -23,6 +23,7 @@ def main():
     parser.add_argument(
         "-t", "--timeout", type=float, default=2.0, help="timeout for reply receipts"
     )
+    parser.add_argument("-n", "--no-reply", help="don't wait for reply, send only", action="store_true")
     parser.add_argument("pktdef", help="scapy packet definition to send")
     args = parser.parse_args()
 
@@ -33,11 +34,14 @@ def main():
             sys.exit(1)
         exec("from scapy.all import " + i, globals(), locals())
 
-    ans, unans = srp(eval(args.pktdef), iface=args.interface, timeout=args.timeout)
-    if not ans:
-        sys.exit(2)
-    for pkt in ans:
-        print(pkt.answer.show(dump=True))
+    if args.no_reply:
+        sendp(eval(args.pktdef), iface=args.interface)
+    else:
+        ans, unans = srp(eval(args.pktdef), iface=args.interface, timeout=args.timeout)
+        if not ans:
+            sys.exit(2)
+        for pkt in ans:
+            print(pkt.answer.show(dump=True))
 
 
 if __name__ == "__main__":

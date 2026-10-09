@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: ISC
 #
-# scappy_sniffer.py
+# scapy_sniffer.py
 #
 # Copyright (c) 2026 ATCorp
 # Jafar Al-Gharaibeh
