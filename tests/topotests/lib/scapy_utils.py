@@ -84,7 +84,7 @@
 # differ, wrong one will be restored. One more reason to use locks as described
 # above. (as of writing netns.py has version 1.0)
 
-import netns
+from lib import netns
 
 from scapy.all import AsyncSniffer, Scapy_Exception
 from scapy.config import conf
