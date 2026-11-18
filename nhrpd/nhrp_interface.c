@@ -90,7 +90,7 @@ static int nhrp_if_new_hook(struct interface *ifp)
 static int nhrp_if_delete_hook(struct interface *ifp)
 {
 	struct nhrp_interface *nifp = ifp->info;
-	struct vrf *vrf = vrf_lookup_by_id(VRF_DEFAULT);
+	struct vrf *vrf;
 	struct interface *gre_ifp;
 
 	debugf(NHRP_DEBUG_IF, "Deleted interface (%s)", ifp->name);
@@ -124,12 +124,14 @@ static int nhrp_if_delete_hook(struct interface *ifp)
 	 * If this interface is an NBMA source, detach any GRE tunnels
 	 * subscribed to its notifier list.
 	 */
-	FOR_ALL_INTERFACES (vrf, gre_ifp) {
-		struct nhrp_interface *gnifp = gre_ifp->info;
+	RB_FOREACH (vrf, vrf_name_head, &vrfs_by_name) {
+		FOR_ALL_INTERFACES (vrf, gre_ifp) {
+			struct nhrp_interface *gnifp = gre_ifp->info;
 
-		if (gnifp && gnifp->nbmaifp == ifp) {
-			notifier_del(&gnifp->nbmanifp_notifier, &nifp->notifier_list);
-			gnifp->nbmaifp = NULL;
+			if (gnifp && gnifp->nbmaifp == ifp) {
+				notifier_del(&gnifp->nbmanifp_notifier, &nifp->notifier_list);
+				gnifp->nbmaifp = NULL;
+			}
 		}
 	}
 
